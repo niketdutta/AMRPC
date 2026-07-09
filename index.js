@@ -3,6 +3,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import fetch from "node-fetch";
 import "dotenv/config";
+
 const execAsync = promisify(exec);
 
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "1524781530956693654";
