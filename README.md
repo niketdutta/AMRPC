@@ -1,93 +1,157 @@
-# Apple Music Discord Rich Presence
+# AMRPC — Apple Music Rich Presence
 
-Shows what you're listening to in Apple Music (macOS) as a custom Discord
-Rich Presence status — song title, artist, album art, and a progress bar —
-similar to the built-in Spotify integration.
+**Turn your Discord status into a live now-playing ticker for Apple Music.**
 
-> Note: Discord reserves the exact "Listening to Spotify" badge/UI for a
-> handful of whitelisted first-party integrations. This script instead
-> creates a custom Rich Presence activity under **your own Discord
-> application**, which looks very similar (title, artist, artwork, progress
-> bar) but shows your app's name instead of "Spotify".
+Song title, artist, album art, and a real-time progress bar — the same kind
+of presence Spotify users get, but for Apple Music. No Spotify account
+required, no paid API, no background service from Apple. Just your Mac
+talking to Discord.
+
+---
+
+## How it works
+
+AMRPC is three small pieces glued together, polling in a loop:
+
+```
+ Music.app  ──AppleScript──▶  AMRPC  ──iTunes Search API──▶  album art
+                                │
+                                └──local IPC──▶  Discord client
+```
+
+**1. Ask Apple Music what's playing.**
+Every few seconds, AMRPC runs a short AppleScript against the Music app —
+the same scripting bridge that's powered Mac automation for over two
+decades — asking for the track name, artist, album, playback position, and
+whether it's playing or paused. No permissions dialog, no API key, because
+this is just talking to an app that's already running on your machine.
+
+**2. Find the artwork.**
+Apple Music's local scripting interface doesn't hand over album art
+directly, so AMRPC looks it up by artist + album name against Apple's free,
+keyless iTunes Search API and caches the result so it's not re-fetched on
+every poll.
+
+**3. Hand it to Discord.**
+AMRPC connects to your **local Discord desktop client** over IPC — the same
+low-level channel games use to show "playing" statuses — and sets a Rich
+Presence activity: title, artist, artwork, and a start/end timestamp pair
+that Discord renders as a live progress bar. Pause the song and the bar
+disappears and the icon flips to a pause glyph; quit Music and your status
+clears itself entirely.
+
+That's the whole loop. No server, no database, no account linking — it's a
+script quietly relaying local state from one app to another.
+
+> **Why doesn't it say "Listening to Spotify"-style with the exact same
+> badge?** That specific badge is hard-coded by Discord to a short list of
+> first-party partners. AMRPC runs as *your own* Discord application
+> instead, so you get the identical layout — art, title, artist, progress
+> bar — under a name you control.
+
+---
 
 ## Requirements
 
 - macOS with the native **Music** app
 - [Node.js](https://nodejs.org/) 18+
-- The **Discord desktop app** running and logged in (Rich Presence talks to
-  the local Discord client over IPC — it will not work in the browser)
+- The **Discord desktop app**, open and logged in (browser Discord can't do
+  local IPC)
 
-## 1. Create a Discord Application
+## Quick start
 
-1. Go to https://discord.com/developers/applications and click **New
-   Application**. Name it whatever you want (e.g. "Apple Music").
-2. Copy the **Application ID / Client ID** from the General Information tab.
-3. (Optional but recommended) Go to **Rich Presence → Art Assets** and
-   upload two small icons with these exact keys:
-   - `play` — a play icon
-   - `pause` — a pause icon
-   - `apple_music_logo` — an Apple Music logo, used as a fallback large
-     image if album art can't be found
-   These are referenced by key in `index.js`. Album art itself is fetched
-   automatically from Apple's public iTunes Search API at runtime, so you
-   don't need to upload art per-song.
+**1. Register a Discord application**
+Head to the [Discord Developer Portal](https://discord.com/developers/applications) →
+**New Application** → copy the **Client ID**.
 
-## 2. Install and configure
-
+**2. Install**
 ```bash
 npm install
 cp .env.example .env
 ```
-
-Open `.env` and paste in your client ID:
-
+Paste your client ID into `.env`:
 ```
 DISCORD_CLIENT_ID=1234567890123456789
 ```
 
-## 3. Run it
-
-Make sure Discord and Apple Music are both open, then:
-
+**3. Run**
 ```bash
 npm start
 ```
+Play something in Apple Music — your Discord status updates within
+seconds.
 
-Play a song in Apple Music — within a few seconds your Discord status should
-update. Pausing switches the small icon to a pause symbol and removes the
-countdown; stopping/quitting Music clears the status entirely.
+**4. (Optional) Make it start automatically**
+See `com.local.apple-music-discord-rpc.plist` — a `launchd` LaunchAgent
+that keeps AMRPC running quietly in the background from login onward, so
+it's simply *there* whenever you open Apple Music. Setup steps are at the
+bottom of this file.
 
-## How it works
+---
 
-- `index.js` polls the Music app every few seconds using AppleScript
-  (`osascript`) to read the current track, artist, album, position, and
-  play state — no special permissions or Apple Music API key needed.
-- Album artwork is looked up via Apple's free iTunes Search API
-  (`itunes.apple.com/search`), no API key required.
-- Presence updates are sent to your local Discord client over IPC via the
-  [`@xhayper/discord-rpc`](https://www.npmjs.com/package/@xhayper/discord-rpc)
-  library (an actively maintained fork of the now-archived official
-  `discord-rpc` package).
+## Custom art assets (optional)
 
-## Running it in the background
+Album art is fetched automatically. For polish, upload two small icons in
+the Developer Portal under **Rich Presence → Art Assets**:
 
-To keep it running without a terminal window open, you can use `pm2`:
+| Key | Used for |
+|---|---|
+| `play` | small icon shown while a track is playing |
+| `pause` | small icon shown while paused |
+| `apple_music_logo` | fallback large image if no artwork is found |
 
+---
+
+## Run it in the background
+
+**Option A — `launchd` (native, recommended)**
+```bash
+# edit the paths inside the plist first
+cp com.local.apple-music-discord-rpc.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.local.apple-music-discord-rpc.plist
+```
+Starts at login, restarts itself if it ever crashes, sits idle until Music
+is playing something.
+
+- Check it's alive: `launchctl list | grep apple-music`
+- Logs: `/tmp/apple-music-discord-rpc.log` / `.error.log`
+- Stop it: `launchctl unload ~/Library/LaunchAgents/com.local.apple-music-discord-rpc.plist`
+
+**Option B — `pm2`**
 ```bash
 npm install -g pm2
-pm2 start index.js --name apple-music-rpc
+pm2 start index.js --name amrpc
 pm2 save
 ```
 
-Or wrap it in a simple `launchd` plist if you want it to start on login —
-happy to put that together if you want it.
+---
 
 ## Troubleshooting
 
-- **"Failed to connect to Discord"** — Discord desktop app must be open and
-  you must be logged in.
-- **Nothing shows up** — make sure "Display current activity as a status
-  message" is enabled in Discord → Settings → Activity Privacy.
-- **Wrong/missing artwork** — the iTunes lookup matches on artist + album
-  name; very obscure or mistagged albums may not be found, in which case it
-  falls back to the `apple_music_logo` asset key.
+| Symptom | Fix |
+|---|---|
+| "Failed to connect to Discord" | Open the Discord **desktop app** and log in — browser tabs don't expose local IPC |
+| Status never appears | Discord → Settings → Activity Privacy → enable "Display current activity as a status message" |
+| Wrong or missing artwork | Lookup is by artist + album name; obscure or mistagged albums fall back to the `apple_music_logo` asset |
+| Works, then goes stale | Make sure Music is still the foreground *player* — AMRPC reads player state, not just app focus |
+
+---
+
+## Under the hood, one more level down
+
+- **AppleScript bridge** — `osascript` invoked as a child process; a single
+  `tell application "Music"` block returns everything needed in one
+  round-trip.
+- **Rate-limit friendly** — AMRPC only calls Discord's `setActivity` when
+  the track or play state actually changes, or every 15s as a keepalive,
+  rather than on every 3-second poll.
+- **IPC client** — [`@xhayper/discord-rpc`](https://www.npmjs.com/package/@xhayper/discord-rpc),
+  an actively maintained fork of Discord's original (now-archived)
+  `discord-rpc` package.
+- **Artwork** — Apple's public `itunes.apple.com/search` endpoint, no key,
+  no auth, cached per artist/album for the life of the process.
+
+---
+
+*AMRPC is an unofficial, local-only script. It isn't affiliated with
+Apple, Discord, or Spotify.*
