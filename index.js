@@ -6,7 +6,7 @@ import "dotenv/config";
 
 const execAsync = promisify(exec);
 
-const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "1524781530956693654";
+const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "your-client-id";
 if (!CLIENT_ID) {
   console.error(
     "Missing DISCORD_CLIENT_ID. Create a .env file (see .env.example) with your Discord application's client ID.",
